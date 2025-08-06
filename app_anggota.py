@@ -20,10 +20,17 @@ Unggah dua file Excel atau CSV, pilih kolom kunci perbandingan, lalu lihat dan u
 """)
 
 def read_file(file):
-    if file.name.endswith('.csv'):
-        return pd.read_csv(file)
-    else:
-        return pd.read_excel(file)
+    try:
+        if file.name.endswith('.csv'):
+            return pd.read_csv(file, encoding='utf-8', on_bad_lines='skip')
+        elif file.name.endswith('.xlsx'):
+            return pd.read_excel(file)
+        else:
+            st.error("❌ Format file tidak dikenali. Harap upload file CSV atau Excel.")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"❌ Gagal membaca file: {e}")
+        return pd.DataFrame()
 
 file1 = st.file_uploader("📁 Upload File 1", type = ["xlsx", "csv"], key = "file1")
 file2 = st.file_uploader("📁 Upload File 2", type = ["xlsx", "csv"], key = "file2")
@@ -32,10 +39,8 @@ if file1 and file2:
     df1 = read_file(file1)
     df2 = read_file(file2)
 
-    common_cols = list(set(df1.columns).intersection(df2.columns))
-
-    if not common_cols:
-        st.warning("❗ Tidak ada kolom yang sama untuk dibandingkan antara dua file.")
+    if df1.empty or df2.empty:
+        st.warning("🚫 Salah satu file kosong atau gagal dibaca.")
     else:
         kolom_kunci = st.selectbox("🔑 Pilih Kolom Kunci untuk Perbandingan", common_cols)
 
