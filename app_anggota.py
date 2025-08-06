@@ -24,10 +24,13 @@ def read_file(file):
         if file.name.endswith('.csv'):
             return pd.read_csv(file, encoding='utf-8', on_bad_lines='skip')
         elif file.name.endswith('.xlsx'):
-            return pd.read_excel(file)
+            return pd.read_excel(file, engine='openpyxl')
         else:
             st.error("❌ Format file tidak dikenali. Harap upload file CSV atau Excel.")
             return pd.DataFrame()
+    except ImportError as e:
+        st.error("❌ openpyxl belum tersedia. Tambahkan 'openpyxl' ke dalam file requirements.txt.")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ Gagal membaca file: {e}")
         return pd.DataFrame()
