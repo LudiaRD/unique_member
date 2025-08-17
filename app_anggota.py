@@ -2,12 +2,15 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from datetime import datetime, date
+from datetime import date, timedelta
+from pathlib import Path
 
-st.set_page_config(page_title="Cleansing Anggota – Dispusipda & Sumedang", layout="wide")
-
+# =========================
+# Konfigurasi halaman
+# =========================
+st.set_page_config(page_title="Cleansing & Pencocokan Anggota (NIK)", layout="wide")
 st.title("Cleansing & Pencocokan Anggota (NIK)")
-st.caption("Unggah dua file Excel, pilih filter tanggal bila perlu, lalu unduh hasilnya (tanpa coding).")
+st.caption("Unggah dua file (Excel/CSV), atur (opsional) filter tanggal, lalu unduh hasilnya — tanpa coding.")
 
 # =========================
 # Util fungsi
@@ -15,6 +18,7 @@ st.caption("Unggah dua file Excel, pilih filter tanggal bila perlu, lalu unduh h
 REQUIRED_COLS = ["MemberNo", "IdentityNo", "CreateDate"]
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
+    """Simpan DataFrame ke bytes Excel (untuk download_button)."""
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
@@ -22,56 +26,84 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
     return buf.getvalue()
 
 def ensure_required_columns(df: pd.DataFrame, name: str):
+    """Pastikan kolom wajib tersedia; hentikan app bila tidak lengkap."""
     missing = [c for c in REQUIRED_COLS if c not in df.columns]
     if missing:
         st.error(f"File **{name}** tidak memiliki kolom wajib: {', '.join(missing)}")
         st.stop()
 
 def normalize_nik_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # Pastikan string & trim
+    """Pastikan kolom NIK berformat string dan di-trim spasi."""
+    df = df.copy()
     for c in ["MemberNo", "IdentityNo"]:
-        df[c] = df[c].astype(str).str.strip()
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.strip()
     return df
 
 def is_valid_nik_len16_awal3(value) -> bool:
-    value = str(value)
-    return value.isdigit() and len(value) == 16 and value.startswith("3")
+    """Validasi NIK: 16 digit dan dimulai '3'."""
+    s = str(value)
+    return s.isdigit() and len(s) == 16 and s.startswith("3")
 
 def filter_nik_len16_awal3(df: pd.DataFrame) -> pd.DataFrame:
-    # Buang baris yang kedua kolom NIK-nya tidak valid (hanya keep yang salah satu valid)
-    mask_invalid_both = (~df["MemberNo"].apply(is_valid_nik_len16_awal3)) & \
-                        (~df["IdentityNo"].apply(is_valid_nik_len16_awal3))
-    return df[~mask_invalid_both].copy()
+    """
+    Hanya pertahankan baris yang setidaknya SALAH SATU dari kolom (MemberNo/IdentityNo)
+    merupakan NIK valid (16 digit & mulai '3').
+    """
+    df = df.copy()
+    m_valid = df["MemberNo"].apply(is_valid_nik_len16_awal3)
+    i_valid = df["IdentityNo"].apply(is_valid_nik_len16_awal3)
+    return df[m_valid | i_valid].copy()
 
 def apply_date_filter(df: pd.DataFrame, start_d: date, end_d: date) -> pd.DataFrame:
+    """Filter baris berdasarkan rentang tanggal (inklusif) pada kolom CreateDate."""
     df = df.copy()
     df["CreateDate"] = pd.to_datetime(df["CreateDate"], errors="coerce")
     df["date"] = df["CreateDate"].dt.date
-    # keep antara start dan end (inklusif)
     return df[(df["date"] >= start_d) & (df["date"] <= end_d)].copy()
 
-def format_count(n):
+def format_count(n: int) -> str:
     return f"{n:,}".replace(",", ".")
+
+def load_file(uploaded_file):
+    """Baca file Excel/CSV menjadi DataFrame."""
+    if uploaded_file is None:
+        return None
+    name = uploaded_file.name.lower()
+    try:
+        if name.endswith(".csv"):
+            # Coba auto-detect delimiter; jika perlu bisa tambahkan parameter sep
+            df = pd.read_csv(uploaded_file)
+        elif name.endswith(".xlsx") or name.endswith(".xls"):
+            df = pd.read_excel(uploaded_file, engine="openpyxl")
+        else:
+            st.error(f"Ekstensi file {uploaded_file.name} tidak didukung. Gunakan .csv, .xlsx, atau .xls")
+            st.stop()
+    except Exception as e:
+        st.error(f"Gagal membaca {uploaded_file.name}: {e}")
+        st.stop()
+    return df
 
 # =========================
 # Sidebar: Upload & opsi
 # =========================
-st.sidebar.header("1) Unggah File Excel")
-f1 = st.sidebar.file_uploader("File A (Dispusipda)", type=["xlsx", "xls"])
-f2 = st.sidebar.file_uploader("File B (Sumedang)", type=["xlsx", "xls"])
+st.sidebar.header("1) Unggah File Excel/CSV")
+f1 = st.sidebar.file_uploader("File A (Dispusipda)", type=["xlsx", "xls", "csv"])
+f2 = st.sidebar.file_uploader("File B (Sumedang)", type=["xlsx", "xls", "csv"])
 
 st.sidebar.header("2) Opsi Filter Tanggal (Opsional)")
 use_date_filter = st.sidebar.checkbox("Aktifkan filter tanggal penerapan NIK", value=False)
 
 today = date.today()
+default_end = today - timedelta(days=1) if today.day == 1 else today
 if use_date_filter:
     st.sidebar.subheader("Rentang tanggal untuk File A (Dispusipda)")
     start_a = st.sidebar.date_input("Start A", value=date(2023, 8, 1))
-    end_a   = st.sidebar.date_input("End A",   value=date(today.year, min(today.month, 12), min(today.day, 28)))
+    end_a   = st.sidebar.date_input("End A",   value=default_end)
 
     st.sidebar.subheader("Rentang tanggal untuk File B (Sumedang)")
     start_b = st.sidebar.date_input("Start B", value=date(2025, 1, 1))
-    end_b   = st.sidebar.date_input("End B",   value=date(today.year, min(today.month, 12), min(today.day, 28)))
+    end_b   = st.sidebar.date_input("End B",   value=default_end)
 else:
     start_a = end_a = start_b = end_b = None
 
@@ -85,14 +117,11 @@ if process:
         st.warning("Silakan unggah **dua** file terlebih dahulu.")
         st.stop()
 
-    # Baca excel
-    try:
-        df1 = pd.read_excel(f1, header=0, engine="openpyxl")
-        df2 = pd.read_excel(f2, header=0, engine="openpyxl")
-    except Exception as e:
-        st.error(f"Gagal membaca Excel: {e}")
-        st.stop()
+    # Baca file
+    df1 = load_file(f1)
+    df2 = load_file(f2)
 
+    # Validasi kolom
     ensure_required_columns(df1, f1.name)
     ensure_required_columns(df2, f2.name)
 
@@ -101,27 +130,27 @@ if process:
         df1 = apply_date_filter(df1, start_a, end_a)
         df2 = apply_date_filter(df2, start_b, end_b)
 
-    # Filter NIK valid (16 digit, mulai '3') untuk keduanya
+    # Normalisasi + filter NIK valid
+    df1 = normalize_nik_columns(df1)
+    df2 = normalize_nik_columns(df2)
+
     df1_filteredNIK = filter_nik_len16_awal3(df1)
     df2_filteredNIK = filter_nik_len16_awal3(df2)
 
-    # Normalisasi kolom NIK -> string/trim
-    df1_filteredNIK = normalize_nik_columns(df1_filteredNIK)
-    df2_filteredNIK = normalize_nik_columns(df2_filteredNIK)
-
-    # ===== Pencocokan 1: Tambahan untuk Sumedang (baris di B yang TIDAK ada di A) =====
+    # Set NIK untuk pencocokan
     nik_set_A = set(df1_filteredNIK["MemberNo"]).union(set(df1_filteredNIK["IdentityNo"]))
+    nik_set_B = set(df2_filteredNIK["MemberNo"]).union(set(df2_filteredNIK["IdentityNo"]))
+
+    # B → Tambah (baris di B yang tidak ada di A pada kedua kolom NIK)
     df2_not_in_A = df2_filteredNIK[
         (~df2_filteredNIK["MemberNo"].isin(nik_set_A)) &
         (~df2_filteredNIK["IdentityNo"].isin(nik_set_A))
     ].copy()
 
-    # ===== Pencocokan 2: Tambahan untuk Dispusipda (baris di A yang NIK '3211' dan TIDAK ada di B) =====
-    nik_set_B = set(df2_filteredNIK["MemberNo"]).union(set(df2_filteredNIK["IdentityNo"]))
-
+    # A → Tambah (baris di A yang NIK '3211' & tidak ada di B)
     def is_valid_3211_not_in_B(nik: str) -> bool:
-        nik = str(nik)
-        return nik.startswith("3211") and (nik not in nik_set_B)
+        s = str(nik)
+        return s.startswith("3211") and (s not in nik_set_B)
 
     df1_3211_not_in_B = df1_filteredNIK[
         df1_filteredNIK["MemberNo"].apply(is_valid_3211_not_in_B) |
@@ -131,6 +160,7 @@ if process:
     # =========================
     # Ringkasan & Preview
     # =========================
+    st.subheader("Ringkasan")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Baris A (setelah filter NIK)", format_count(len(df1_filteredNIK)))
     col2.metric("Baris B (setelah filter NIK)", format_count(len(df2_filteredNIK)))
@@ -183,20 +213,24 @@ if process:
             use_container_width=True
         )
 
-    # Catatan untuk user
     st.info(
         "Logika utama:\n"
-        "- Hanya baris dengan **NIK valid (16 digit, mulai '3')** yang dipertahankan.\n"
-        "- **B → Tambah**: baris di B yang `MemberNo` **dan** `IdentityNo`-nya tidak muncul di A.\n"
-        "- **A → Tambah**: baris di A yang `MemberNo` **atau** `IdentityNo`-nya **mulai '3211'** dan **tidak ada** di B."
+        "- Pertahankan baris dengan **NIK valid (16 digit, mulai '3')** di `MemberNo` **atau** `IdentityNo`.\n"
+        "- **B → Tambah**: baris di B yang **tidak muncul** di A pada kedua kolom NIK.\n"
+        "- **A → Tambah**: baris di A yang NIK-nya **mulai '3211'** dan **tidak ada** di B."
     )
 else:
     st.markdown(
         """
         **Cara pakai singkat:**
-        1. Unggah dua file Excel di sidebar (Dispusipda sebagai *File A*, Sumedang sebagai *File B*).
+        1. Unggah dua file (Excel/CSV) di sidebar — *File A* (Dispusipda) & *File B* (Sumedang).
         2. (Opsional) Aktifkan *Filter Tanggal* dan atur rentang untuk masing-masing file.
-        3. Klik **Proses Data** → lihat ringkasan & preview.
-        4. Klik tombol **Unduh** untuk menyimpan hasil.
+        3. Klik **Proses Data** → periksa ringkasan & preview.
+        4. Klik tombol **Unduh** untuk menyimpan hasil (Excel).
         """
     )
+
+# =========================
+# Footer kecil
+# =========================
+st.caption("© 2025 — Utility cleansing anggota. Pastikan kolom: MemberNo, IdentityNo, CreateDate.")
