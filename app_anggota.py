@@ -88,8 +88,8 @@ def load_file(uploaded_file):
 # Sidebar: Upload & opsi
 # =========================
 st.sidebar.header("1) Unggah File Excel/CSV")
-f1 = st.sidebar.file_uploader("File A (Dispusipda)", type=["xlsx", "xls", "csv"])
-f2 = st.sidebar.file_uploader("File B (Sumedang)", type=["xlsx", "xls", "csv"])
+f1 = st.sidebar.file_uploader("File A (Dispusipda)", type=["xlsx", "xls", "csv"], key="a")
+f2 = st.sidebar.file_uploader("File B (Sumedang)", type=["xlsx", "xls", "csv"], key="b")
 
 st.sidebar.header("2) Opsi Filter Tanggal (Opsional)")
 use_date_filter = st.sidebar.checkbox("Aktifkan filter tanggal penerapan NIK", value=False)
