@@ -1,1 +1,1 @@
-pip install --upgrade streamlit pandas openpyxl xlrd
+RUN pip install -U streamlit pandas openpyxl xlrd pyarrow
