@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+openpyxl==3.0.14
+altair
+xlrd==2.0
+pyarrow==14
+xlsxwriter
