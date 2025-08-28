@@ -2,6 +2,7 @@ import io
 import re
 import pandas as pd
 import streamlit as st
+import difflib
 
 st.set_page_config(page_title = "CSV/Excel Viewer + NIK Cleaner & Comparator", page_icon = "🧹", layout = "wide")
 st.title("🧹 CSV/Excel Viewer + NIK Cleaner & Comparator")
@@ -219,7 +220,7 @@ else:
     front_cols_a = ["NIK"]
     other_cols_a = [c for c in df_only_a.columns if c not in front_cols_a]
     df_only_a = df_only_a[front_cols_a + other_cols_a]
-    st.dataframe(df_only_a.head(50), use_container_width=True)
+    st.dataframe(df_only_a.head(50), use_container_width = True)
 
     csv_a = df_only_a.to_csv(index = False).encode("utf-8-sig")
     st.download_button("⬇️ Download NIK hanya di Data Dispusipda (CSV)", data = csv_a, file_name = "only_in_data_dispusipda.csv", mime = "text/csv", key = "dl_only_a_csv")
@@ -227,3 +228,146 @@ else:
     with pd.ExcelWriter(buf_a, engine = "openpyxl") as writer:
         df_only_a.to_excel(writer, index = False, sheet_name = "only_in_dispusipda")
     st.download_button("⬇️ Download NIK hanya di Data Dispusipda (XLSX)", data = buf_a.getvalue(), file_name = "only_in_data_dispusipda.xlsx", mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key = "dl_only_a_xlsx")
+
+# ---------- Standarisasi Tanpa Upload Mapping ----------
+st.markdown("---")
+st.subheader("5) Standarisasi Otomatis (sesuai template)")
+
+# 1) Tentukan urutan & nama kolom final yang diinginkan (template)
+TEMPLATE_ORDER = ["NO", "NO ANGGOTA", "NAMA", "TEMPAT LAHIR", "TANGGAL LAHIR", "ALAMAT SESUAI KTP", "KECAMATAN SESUAI KTP", "KELURAHAN SESUAI KTP", "RT SESUAI KTP", "RW SESUAI KTP", "PROPINSI SESUAI KTP", "KABUPATEN/KOTA SESUAI KTP", "ALAMAT TEMPAT TINGGAL SEKARANG", "KECAMATAN SEKARANG", "KELURAHAN SEKARANG", "RT SEKARANG", "RW SEKARANG", "PROPINSI SEKARANG", "KABUPATEN/KOTA SEKARANG", "NO. HP", "NO. TELP RUMAH", "JENIS IDENTITAS", "NO. IDENTITAS", "JENIS KELAMIN", "AGAMA", "PEKERJAAN", "IBU KANDUNG", "ALAMAT EMAIL", "JENIS ANGGOTA", "PENDIDIKAN TERAKHIR", "STATUS PERKAWINAN", "TANGGAL PENDAFTARAN", "TANGGAL AKHIR BERLAKU", "JENIS PERMOHONAN", "STATUS ANGGOTA", "NAMA INSTITUSI", "ALAMAT INSTITUSI", "NO TELP INSTITUSI", "NAMA (KEADAAN DARURAT)", "ALAMAT (KEADAAN DARURAT)", "NO TELP (KEADAAN DARURAT)", "STATUS HUBUNGAN (DARURAT)", "UNIT KERJA", "TAHUN AJARAN", "FAKULTAS", "JURUSAN", "PROGRAM STUDI", "KELAS SISWA", "PHOTO URL"]
+
+# 2) Mapping bawaan: kolom sumber di DataBaru & DataAwal.
+#    Isi sesuai kolom asli pada df_only_b (Kab/Kota) & df_only_a (Dispusipda).
+#    Jika tidak ada/biarkan "", sistem akan coba sinonim & fuzzy match.
+MAPPING_BUILTIN = {"NO":                             {"kab": "ID",                    "disp": "ID"},
+                   "NO ANGGOTA":                     {"kab": "MemberNo",              "disp": "MemberNo"},
+                   "NAMA":                           {"kab": "Fullname",              "disp": "Fullname"},
+                   "TEMPAT LAHIR":                   {"kab": "PlaceOfBirth",          "disp": "PlaceOfBirth"},
+                   "TANGGAL LAHIR":                  {"kab": "DateOfBirth",           "disp": "DateOfBirth"},
+                   "ALAMAT SESUAI KTP":              {"kab": "Address",               "disp": "Address"},
+                   "KECAMATAN SESUAI KTP":           {"kab": "Kecamatan",             "disp": "Kecamatan"},
+                   "KELURAHAN SESUAI KTP":           {"kab": "Kelurahan",             "disp": "Kelurahan"},
+                   "RT SESUAI KTP":                  {"kab": "RT",                    "disp": "RT"},
+                   "RW SESUAI KTP":                  {"kab": "RW",                    "disp": "RW"},
+                   "PROPINSI SESUAI KTP":            {"kab": "Province",              "disp": "Province"},
+                   "KABUPATEN / KOTA SESUAI KTP":    {"kab": "City",                  "disp": "City"},
+                   "ALAMAT TEMPAT TINGGAL SEKARANG": {"kab": "AddressNow",            "disp": "AddressNow"},
+                   "KECAMATAN SEKARANG":             {"kab": "KecamatanNow",          "disp": "KecamatanNow"},
+                   "KELURAHAN SEKARANG":             {"kab": "KelurahanNow",          "disp": "KelurahanNow"},
+                   "RT SEKARANG":                    {"kab": "RTNow",                 "disp": "RTNow"},
+                   "RW SEKARANG":                    {"kab": "RWNow",                 "disp": "RWNow"},
+                   "PROPINSI SEKARANG":              {"kab": "ProvinceNow",           "disp": "ProvinceNow"},
+                   "KABUPATEN / KOTA SEKARANG":      {"kab": "CityNow",               "disp": "CityNow"},
+                   "NO. HP":                         {"kab": "NoHp",                  "disp": "NoHp"},
+                   "NO. TELP RUMAH":                 {"kab": "Phone",                 "disp": "Phone"},
+                   "JENIS IDENTITAS":                {"kab": "IdentityType_id",       "disp": "IdentityType_id"},
+                   "NO. IDENTITAS":                  {"kab": "IdentityNo",            "disp": "IdentityNo"},
+                   "JENIS KELAMIN":                  {"kab": "Sex_id",                "disp": "Sex_id"},
+                   "AGAMA":                          {"kab": "Agama_id",              "disp": "Agama_id"},
+                   "PEKERJAAN":                      {"kab": "Job_id",                "disp": "Job_id"},
+                   "IBU KANDUNG":                    {"kab": "MotherMaidenName",      "disp": "MotherMaidenName"},
+                   "ALAMAT EMAIL":                   {"kab": "Email",                 "disp": "Email"},
+                   "JENIS ANGGOTA":                  {"kab": "JenisAnggota_id",       "disp": "JenisAnggota_id"},
+                   "PENDIDIKAN TERAKHIR":            {"kab": "EducationLevel_id",     "disp": "EducationLevel_id"},
+                   "STATUS PERKAWINAN":              {"kab": "MartialStatus_id",      "disp": "MartialStatus_id"},
+                   "TANGGAL PENDAFTARAN":            {"kab": "RegisterDate",          "disp": "RegisterDate"},
+                   "TANGGAL AKHIR BERLAKU":          {"kab": "EndDate",               "disp": "EndDate"},
+                   "JENIS PERMOHONAN":               {"kab": "JenisPermohonan_id",    "disp": "JenisPermohonan_id"},
+                   "STATUS ANGGOTA":                 {"kab": "StatusAnggota_id",      "disp": "StatusAnggota_id"},
+                   "NAMA INSTITUSI":                 {"kab": "InstitutionName",       "disp": "InstitutionName"},
+                   "ALAMAT INSTITUSI":               {"kab": "InstitutionAddress",    "disp": "InstitutionAddress"},
+                   "NO TELP INSTITUSI":              {"kab": "InstitutionPhone",      "disp": "InstitutionPhone"},
+                   "NAMA (KEADAAN DARURAT)":         {"kab": "NamaDarurat",           "disp": "NamaDarurat"},
+                   "ALAMAT (KEADAAN DARURAT)":       {"kab": "AlamatDarurat",         "disp": "AlamatDarurat"},
+                   "NO TELP (KEADAAN DARURAT)":      {"kab": "TelpDarurat",           "disp": "TelpDarurat"},
+                   "STATUS HUBUNGAN (DARURAT)":      {"kab": "StatusHubunganDarurat", "disp": "StatusHubunganDarurat"},
+                   "UNIT KERJA":                     {"kab": "UnitKerja_id",          "disp": "UnitKerja_id"},
+                   "TAHUN AJARAN":                   {"kab": "TahunAjaran",           "disp": "TahunAjaran"},
+                   "FAKULTAS":                       {"kab": "Fakultas_id",           "disp": "Fakultas_id"},
+                   "JURUSAN":                        {"kab": "Jurusan_id",            "disp": "Jurusan_id"},
+                   "PROGRAM STUDI":                  {"kab": "ProgramStudi_id",       "disp": "ProgramStudi_id"},
+                   "KELAS SISWA":                    {"kab": "Kelas_id",              "disp": "Kelas_id"},
+                   "PHOTO URL":                      {"kab": "PhotoUrl",              "disp": "PhotoUrl"},
+                  }
+
+# (opsional) kamus sinonim untuk bantu auto-pick jika mapping kosong/typo ringan
+# 3) Sinonim untuk membantu auto-pemetaan (opsional — tambah sesuai kebutuhan)
+#SYNONYMS = {"NIK":          ["NIK", "No KTP", "No_KTP", "IdentityNo", "MemberNo"],
+#            "Nama Lengkap": ["Nama Lengkap", "Nama", "FullName", "Name"],
+#            "Tempat Lahir": ["Tempat Lahir", "Tmp_Lahir", "BirthPlace", "PlaceOfBirth"],
+#            "Tanggal Lahir":["Tanggal Lahir", "Tgl Lahir", "Tgl_Lahir", "BirthDate", "DOB"],
+#            "Jenis Kelamin":["Jenis Kelamin", "JK", "Gender", "Sex"],
+#            "Alamat":       ["Alamat", "Address"],
+#            "Kelurahan":    ["Kelurahan", "Desa"],
+#            "Kecamatan":    ["Kecamatan"],
+#            "Kab/Kota":     ["Kab/Kota", "Kabupaten/Kota", "Kabupaten", "Kota", "Kab_Kota"],
+#            "Provinsi":     ["Provinsi", "Province"],
+#            "No HP":        ["No HP", "HP", "Phone", "Telp", "Mobile", "No_Telp", "No_HP"],
+#            "Email":        ["Email", "E-mail"],
+#           }
+
+def _pick_source_col(df_src: pd.DataFrame, target_name: str, which: str):
+    """Ambil kolom sumber berdasar mapping → sinonim → fuzzy."""
+    # 1) mapping builtin
+    src = MAPPING_BUILTIN.get(target_name, {}).get(which, "")
+    if src and src in df_src.columns:
+        return src
+
+    # 2) sinonim (case-insensitive)
+    lower_map = {str(c).lower(): c for c in df_src.columns}
+    for cand in SYNONYMS.get(target_name, [target_name]):
+        if str(cand).lower() in lower_map:
+            return lower_map[str(cand).lower()]
+
+    # 3) fuzzy (nama template ke kolom sumber)
+    match = difflib.get_close_matches(target_name, [str(c) for c in df_src.columns], n = 1, cutoff = 0.85)
+    return match[0] if match else None
+
+def _standardize(df_src: pd.DataFrame, which: str):
+    """Bentuk dataframe baru persis TEMPLATE_ORDER, isi NA jika tidak ditemukan."""
+    out = pd.DataFrame()
+    for tgt in TEMPLATE_ORDER:
+        src_col = _pick_source_col(df_src, tgt, which)
+        out[tgt] = df_src[src_col] if (src_col and src_col in df_src.columns) else pd.NA
+    return out
+
+if (df_a_clean is not None) and (df_b_clean is not None):
+    # Lihat kolom sumber untuk memudahkan mengedit mapping sekali saja
+    with st.expander("Lihat daftar kolom sumber (debug)"):
+        st.write("Kolom di output Kab/Kota:", list(df_only_b.columns))
+        st.write("Kolom di output Dispusipda:", list(df_only_a.columns))
+
+    std_kab = _standardize(df_only_b, which = "kab")
+    std_disp = _standardize(df_only_a, which = "disp")
+
+    st.markdown("#### Preview Standar – Data Kab/Kota")
+    st.dataframe(std_kab.head(30), use_container_width = True)
+    st.markdown("#### Preview Standar – Data Dispusipda")
+    st.dataframe(std_disp.head(30), use_container_width = True)
+
+    # Unduh versi standar
+    cdl1, cdl2 = st.columns(2)
+    with cdl1:
+        st.download_button("⬇️ Download Standar (Kab/Kota) - CSV", data = std_kab.to_csv(index = False).encode("utf-8-sig"), file_name = "only_in_data_kab_kota_standar.csv", mime = "text/csv", key = "dl_std_kab_csv")
+        buf1 = io.BytesIO()
+        with pd.ExcelWriter(buf1, engine = "openpyxl") as w:
+            std_kab.to_excel(w, index = False, sheet_name = "standar")
+        st.download_button("⬇️ Download Standar (Kab/Kota) - XLSX", data = buf1.getvalue(), file_name = "only_in_data_kab_kota_standar.xlsx", mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key = "dl_std_kab_xlsx")
+    with cdl2:
+        st.download_button("⬇️ Download Standar (Dispusipda) - CSV", data = std_disp.to_csv(index = False).encode("utf-8-sig"), file_name = "only_in_data_dispusipda_standar.csv", mime = "text/csv", key = "dl_std_disp_csv")
+        buf2 = io.BytesIO()
+        with pd.ExcelWriter(buf2, engine = "openpyxl") as w:
+            std_disp.to_excel(w, index = False, sheet_name = "standar")
+        st.download_button("⬇️ Download Standar (Dispusipda) - XLSX", data = buf2.getvalue(), file_name = "only_in_data_dispusipda_standar.xlsx", mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key = "dl_std_disp_xlsx")
+            
+# ---------- Watermark/Copyright ----------
+st.markdown(
+    """
+    <style>
+      .footer-fixed {position: fixed; left: 0; right: 0; bottom: 0; text-align: center; font-size: 12px; padding: 10px 16px; color: #6b7280; background: rgba(0,0,0,0.04); border-top: 1px solid rgba(0,0,0,0.08); z-index: 9999;}
+    </style>
+    <div class = "footer-fixed">© 2025 Tim IT Dispusipda Jabar</div>
+    """,
+    unsafe_allow_html = True,
+)
+st.markdown("<div style = 'height: 60px'></div>", unsafe_allow_html = True)  # spacer
